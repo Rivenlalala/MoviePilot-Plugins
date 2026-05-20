@@ -115,7 +115,12 @@ _ensure_stub(
         "EventType": type("EventType", (), {"TransferComplete": "TransferComplete"}),
         "MediaType": _StubMediaType,
         "ChainEventType": type(
-            "ChainEventType", (), {"MediaRecognizeConvert": "MediaRecognizeConvert"}
+            "ChainEventType",
+            (),
+            {
+                "MediaRecognizeConvert": "MediaRecognizeConvert",
+                "TransferRename": "TransferRename",
+            },
         ),
     },
 )
