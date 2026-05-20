@@ -94,6 +94,9 @@ class MyGirlfriends(_PluginBase):
             except Exception as exc:
                 logger.warning(f"我的女友们: 注册图片域名失败 {self._server_url} - {exc}")
 
+        if self._enabled:
+            self._check_category_yaml()
+
         if self._enabled and self._onlyonce:
             self._scheduler = BackgroundScheduler(timezone=settings.TZ)
             logger.info("我的女友们: 立即执行一次全量扫描")
@@ -285,6 +288,23 @@ class MyGirlfriends(_PluginBase):
     async def async_search_medias(self, meta: MetaBase = None, **kwargs) -> Optional[List[MediaInfo]]:
         """异步入口，调用同步 search_medias。"""
         return self.search_medias(meta=meta, **kwargs)
+
+    def _check_category_yaml(self) -> None:
+        """Log INFO if category.yaml is missing the JAV bucket under movie:.
+
+        Best-effort only: any exception (import failure, YAML parse error,
+        missing settings path) is swallowed so init_plugin always completes.
+        """
+        try:
+            from app.modules.themoviedb.category import CategoryHelper
+            if "JAV" not in CategoryHelper().movie_categorys:
+                logger.info(
+                    "我的女友们: category.yaml 的 movie: 下缺少 JAV 分类条目，"
+                    "JAV 文件将流入默认电影目录。"
+                    "请在 movie: 下添加 'JAV:' 以启用专属媒体库路由。"
+                )
+        except Exception:
+            pass  # best-effort only — CategoryHelper may not be available in test env
 
     def _build_mediainfo(
         self, detail: dict, provider: str, movie_id: str, code: str = None
