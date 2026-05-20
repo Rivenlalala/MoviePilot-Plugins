@@ -117,7 +117,7 @@ def test_search_medias_returns_mediainfo_for_valid_jav_code():
     assert isinstance(result, list)
     assert len(result) == 1
     media = result[0]
-    assert media.title == "Canned JAV Title"
+    assert media.title == "SSIS-001"  # D-04: title overridden to canonical code
     assert media.original_title == "Canned JAV Title"
     assert "/v1/images/primary/javbus/ssis-001" in media.poster_path
     # imdb_id threading from T01: search_medias goes through _build_mediainfo(code=...)
