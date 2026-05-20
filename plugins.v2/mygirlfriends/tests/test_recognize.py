@@ -38,11 +38,18 @@ from mygirlfriends import MyGirlfriends  # noqa: E402
 
 
 class _StubMeta:
-    """Minimal stand-in for ``MetaBase`` — we only ever read ``.title``."""
+    """Minimal stand-in for ``MetaBase``.
 
-    def __init__(self, title: str = "", name: str = ""):
+    Reads: ``.title``, ``.name``, ``.org_string``. ``org_string`` defaults to
+    ``title`` so existing tests stay unchanged; new tests can override it to
+    simulate MoviePilot's MetaInfo normalisation (where ``STARS-944`` lands
+    with ``title == "Stars 944"`` but ``org_string == "STARS-944"``).
+    """
+
+    def __init__(self, title: str = "", name: str = "", org_string: str = None):
         self.title = title
         self.name = name
+        self.org_string = org_string if org_string is not None else title
 
 
 class _StubClient:
@@ -415,3 +422,83 @@ def test_recognize_media_respects_providers_config():
 
     assert result is not None
     assert client.get_calls == [("jav321", "ssis-001-alt")]
+
+
+# --- org_string fallback (click-through 404 fix) ------------------------
+
+
+def test_recognize_media_falls_back_to_org_string():
+    """MoviePilot's MetaInfo normalises SSIS-001 -> 'Ssis 001' on meta.title
+    but preserves the raw input on meta.org_string. The strict parser fails
+    on the normalised title but must succeed via org_string."""
+    client = _StubClient(search_results=_CANNED_SEARCH, movie_detail=_CANNED_DETAIL)
+    plugin = _make_plugin(client=client)
+
+    result = plugin.recognize_media(
+        meta=_StubMeta(title="Ssis 001", org_string="SSIS-001")
+    )
+
+    assert result is not None
+    assert result.imdb_id == "jav:SSIS-001"
+    assert client.search_calls == ["SSIS-001"]
+
+
+def test_async_recognize_media_falls_back_to_org_string():
+    client = _StubClient(search_results=_CANNED_SEARCH, movie_detail=_CANNED_DETAIL)
+    plugin = _make_plugin(client=client)
+
+    result = asyncio.run(
+        plugin.async_recognize_media(
+            meta=_StubMeta(title="Stars 944", org_string="STARS-944")
+        )
+    )
+
+    assert result is not None
+    assert result.imdb_id == "jav:STARS-944"
+    assert client.search_calls == ["STARS-944"]
+
+
+def test_recognize_media_org_string_only_used_when_title_misses():
+    """If the strict parser matches meta.title, org_string is never consulted."""
+    client = _StubClient(search_results=_CANNED_SEARCH, movie_detail=_CANNED_DETAIL)
+    plugin = _make_plugin(client=client)
+
+    # title parses fine — org_string would be a different code but must be ignored
+    result = plugin.recognize_media(
+        meta=_StubMeta(title="SSIS-001", org_string="STARS-944")
+    )
+
+    assert result is not None
+    assert client.search_calls == ["SSIS-001"]  # title won, org_string ignored
+
+
+def test_recognize_media_no_false_positive_on_movie_title_with_year():
+    """org_string fallback must stay strict — 'The Matrix 1999 1080p' must NOT
+    parse to 'MATRIX-1999' (regression guard against the loose-parser approach)."""
+    client = _StubClient(search_results=_CANNED_SEARCH, movie_detail=_CANNED_DETAIL)
+    plugin = _make_plugin(client=client)
+
+    result = plugin.recognize_media(
+        meta=_StubMeta(title="The Matrix 1999 1080p", org_string="The Matrix 1999 1080p")
+    )
+
+    assert result is None
+    assert client.search_calls == []  # client never consulted
+
+
+# --- mediaid_prefix / media_id routing (click-through 404 fix) ----------
+
+
+def test_build_mediainfo_sets_mediaid_prefix_and_id():
+    """MediaCard.getMediaId() builds /media/${prefix}:${id} when tmdb/douban/
+    bangumi IDs are absent. Without these the URL becomes
+    /media/undefined:undefined and the detail page 404s."""
+    client = _StubClient(search_results=_CANNED_SEARCH, movie_detail=_CANNED_DETAIL)
+    plugin = _make_plugin(client=client)
+
+    result = plugin.recognize_media(meta=_StubMeta(title="SSIS-001"))
+
+    assert result is not None
+    assert result.mediaid_prefix == "jav"
+    assert result.media_id == "SSIS-001"
+    assert result.imdb_id == "jav:SSIS-001"  # still set for legacy callers
