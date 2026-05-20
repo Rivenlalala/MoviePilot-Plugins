@@ -23,7 +23,7 @@ from app.schemas.types import ChainEventType, EventType, MediaType
 from app.utils.dom import DomUtils
 
 from .client import MetaTubeClient
-from .javcode import extract_jav_code
+from .javcode import extract_jav_code, extract_jav_code_loose
 
 # ---------------------------------------------------------------------------
 # Module-level regex constants for JAV filename suffix and part detection.
@@ -90,7 +90,7 @@ class MyGirlfriends(_PluginBase):
     plugin_name = "我的女友们"
     plugin_desc = "通过 MetaTube 服务器刮削 JAV 元数据，生成 NFO 文件和下载封面图片。"
     plugin_icon = "metatube.png"
-    plugin_version = "1.2"
+    plugin_version = "1.3"
     plugin_author = "ruiwen"
     author_url = "https://github.com/Rivenlalala"
     plugin_config_prefix = "mygirlfriends_"
@@ -383,7 +383,10 @@ class MyGirlfriends(_PluginBase):
         if not self._enabled or self._recognition_mode != "hijacking":
             return None
         title = getattr(meta, "name", None) or getattr(meta, "title", None)
-        code = extract_jav_code(title) if title else None
+        # MoviePilot normalises hyphens to spaces and title-cases the prefix
+        # before invoking the plugin (e.g. STARS-944 -> "Stars 944"), so the
+        # search path uses the loose matcher. Filename callers stay strict.
+        code = extract_jav_code_loose(title) if title else None
         if not code:
             logger.debug(f"我的女友们: search_medias 标题未匹配番号，跳过 - {title!r}")
             return None

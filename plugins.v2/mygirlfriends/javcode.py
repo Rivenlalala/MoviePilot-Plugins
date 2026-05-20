@@ -28,7 +28,25 @@ import re
 from pathlib import Path
 from typing import Optional
 
-__all__ = ["extract_jav_code", "JavCodeParser"]
+__all__ = ["extract_jav_code", "extract_jav_code_loose", "JavCodeParser"]
+
+
+# Release-tag tokens the loose matcher must NOT treat as JAV codes. MoviePilot's
+# MetaInfo strips most of these before search reaches our plugin, but defending
+# here lets the loose parser stay safe if a user pastes a raw filename into the
+# search box.
+_LOOSE_BLOCKLIST = frozenset({
+    "H264", "H265", "X264", "X265", "AV1",
+    "AC3", "DTS", "AAC", "FLAC",
+    "MP4", "MKV", "AVI",
+    "BD", "BDRIP", "BLURAY", "WEBRIP", "HDRIP", "DVDRIP", "REMUX",
+    "HDR", "HDR10",
+})
+
+# Loose matcher: prefix and number separated by hyphen, whitespace, or nothing.
+# Used only by extract_jav_code_loose for user-typed search input. Filename
+# parsing keeps the strict _STANDARD_PATTERN above.
+_STANDARD_PATTERN_LOOSE = re.compile(r"\b([A-Za-z]{2,6})[\s\-]*(\d{3,6})\b")
 
 
 _UNCENSORED_PATTERNS = (
@@ -103,9 +121,41 @@ def extract_jav_code(text: str) -> Optional[str]:
     return None
 
 
+def extract_jav_code_loose(text: str) -> Optional[str]:
+    """Like :func:`extract_jav_code` but tolerates user-typed search input.
+
+    Tries the strict parser first; on miss, falls back to a looser pattern that
+    accepts hyphen, whitespace, or no separator between prefix and number. Used
+    by ``search_medias`` because MoviePilot's ``MetaInfo`` normalises hyphens
+    to spaces and title-cases the prefix before the plugin is invoked
+    (e.g. ``STARS-944`` -> ``Stars 944``).
+
+    Blocks common release-tag tokens (``H264``, ``X265`` etc.) to keep
+    false-positive risk near zero. Strict callers (filename parsing in
+    ``_build_mediainfo`` / ``on_transfer_rename``) keep using
+    :func:`extract_jav_code` directly.
+    """
+    if not text:
+        return None
+    strict = extract_jav_code(text)
+    if strict:
+        return strict
+    for m in _STANDARD_PATTERN_LOOSE.finditer(text):
+        prefix = m.group(1).upper()
+        number = m.group(2)
+        if prefix in _LOOSE_BLOCKLIST:
+            continue
+        return f"{prefix}-{number}"
+    return None
+
+
 class JavCodeParser:
     """Object wrapper around :func:`extract_jav_code` for callers that prefer a class."""
 
     @staticmethod
     def extract(text: str) -> Optional[str]:
         return extract_jav_code(text)
+
+    @staticmethod
+    def extract_loose(text: str) -> Optional[str]:
+        return extract_jav_code_loose(text)
