@@ -786,6 +786,43 @@ class MyGirlfriends(_PluginBase):
                                 "props": {"cols": 12},
                                 "content": [
                                     {
+                                        "component": "VAlert",
+                                        "props": {
+                                            "type": "warning",
+                                            "variant": "tonal",
+                                            "title": "JAV 整理配置（必需）",
+                                        },
+                                        "content": [
+                                            {
+                                                "component": "span",
+                                                "text": "1. 在 category.yaml 的 movie: 下添加 JAV: 条目（规则留空，因为劫持识别不走 TMDB 规则匹配）。",
+                                            },
+                                            {
+                                                "component": "span",
+                                                "text": "2. 在「目录设置」中新增目录配置：媒体类型=电影，媒体类别=JAV，整理到=<JAV媒体库路径>，整理方式=<按需选择 link/softlink/copy/move>，刮削=关闭。",
+                                            },
+                                            {
+                                                "component": "span",
+                                                "text": "3. 确保本插件的识别模式=劫持（hijacking）已开启。",
+                                            },
+                                            {
+                                                "component": "span",
+                                                "text": "4. NFO 与图片由 Jellyfin 侧的 MetaTube 插件在服务器端生成；MoviePilot 端无需也不会写入元数据。完成后，番号文件将被整理为 <CODE>/<CODE>[-后缀][-分段]{扩展名} 格式。",
+                                            },
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12},
+                                "content": [
+                                    {
                                         "component": "VTextarea",
                                         "props": {
                                             "model": "providers",
