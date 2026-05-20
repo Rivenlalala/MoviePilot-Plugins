@@ -129,7 +129,7 @@ def test_recognize_media_returns_populated_mediainfo_for_jav_title():
     assert result.source == "metatube"
     assert result.adult is True
     assert result.type == MediaType.MOVIE
-    assert result.title == "Canned JAV Title"
+    assert result.title == "SSIS-001"  # D-04: title overridden to canonical code
     assert result.original_title == "Canned JAV Title"
     assert result.overview == "Canned summary text."
     assert result.release_date == "2023-04-15"
@@ -385,7 +385,7 @@ def test_recognize_media_translates_title_when_enabled():
 
     assert result is not None
     assert result.original_title == "Canned JAV Title"
-    assert result.title == "[ZH]Canned JAV Title"
+    assert result.title == "SSIS-001"  # D-04: title = code overrides translation
 
 
 # --- S02 cross-checks (recognize_media now delegates to _search_and_merge) ---

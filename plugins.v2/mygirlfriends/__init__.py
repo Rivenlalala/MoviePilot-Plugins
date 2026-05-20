@@ -345,6 +345,8 @@ class MyGirlfriends(_PluginBase):
 
         if code:
             media.imdb_id = f"jav:{code}"
+            media.category = "JAV"
+            media.title = code
 
         return media
 

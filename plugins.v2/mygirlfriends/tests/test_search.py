@@ -117,7 +117,7 @@ def test_search_medias_returns_mediainfo_for_valid_jav_code():
     assert isinstance(result, list)
     assert len(result) == 1
     media = result[0]
-    assert media.title == "Canned JAV Title"
+    assert media.title == "SSIS-001"  # D-04: title overridden to canonical code
     assert media.original_title == "Canned JAV Title"
     assert "/v1/images/primary/javbus/ssis-001" in media.poster_path
     # imdb_id threading from T01: search_medias goes through _build_mediainfo(code=...)
@@ -546,3 +546,51 @@ def test_async_recognize_media_sets_imdb_id_jav_prefix():
 
     assert result is not None
     assert result.imdb_id == "jav:SSIS-001"
+
+
+# === _build_mediainfo category + title overrides (D-01, D-04) ===========
+
+
+def test_build_mediainfo_sets_category_jav():
+    """D-01: category must be 'JAV' when a canonical code is provided."""
+    plugin = _make_plugin(client=_StubClient())
+
+    media = plugin._build_mediainfo(
+        {"title": "Japanese Title"}, "javbus", "ssis-001", code="SSIS-001"
+    )
+
+    assert media.category == "JAV"
+
+
+def test_build_mediainfo_sets_title_to_code():
+    """D-04: title must equal the canonical code (overrides translation)."""
+    plugin = _make_plugin(client=_StubClient())
+
+    media = plugin._build_mediainfo(
+        {"title": "Japanese Title"}, "javbus", "ssis-001", code="SSIS-001"
+    )
+
+    assert media.title == "SSIS-001"
+
+
+def test_build_mediainfo_preserves_original_title():
+    """original_title must remain the MetaTube detail title (not overwritten)."""
+    plugin = _make_plugin(client=_StubClient())
+
+    media = plugin._build_mediainfo(
+        {"title": "Japanese Title"}, "javbus", "ssis-001", code="SSIS-001"
+    )
+
+    assert media.original_title == "Japanese Title"
+
+
+def test_build_mediainfo_no_code_skips_category_and_title_override():
+    """When code is None, new overrides must NOT fire (non-JAV path unchanged)."""
+    plugin = _make_plugin(client=_StubClient())
+
+    media = plugin._build_mediainfo(
+        {"title": "Some Movie"}, "javbus", "abc", code=None
+    )
+
+    assert getattr(media, "category", None) != "JAV"
+    assert getattr(media, "title", None) != "SSIS-001"
