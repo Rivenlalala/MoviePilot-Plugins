@@ -386,3 +386,32 @@ def test_recognize_media_translates_title_when_enabled():
     assert result is not None
     assert result.original_title == "Canned JAV Title"
     assert result.title == "[ZH]Canned JAV Title"
+
+
+# --- S02 cross-checks (recognize_media now delegates to _search_and_merge) ---
+
+
+def test_recognize_media_uses_search_and_merge_internally():
+    """S02 T01 refactor: ``recognize_media`` now goes through ``_search_and_merge``,
+    which means the built ``MediaInfo`` should carry ``imdb_id='jav:CODE'``."""
+    client = _StubClient(search_results=_CANNED_SEARCH, movie_detail=_CANNED_DETAIL)
+    plugin = _make_plugin(client=client)
+
+    result = plugin.recognize_media(meta=_StubMeta(title="SSIS-001"))
+
+    assert result is not None
+    assert result.poster_path  # proves _build_mediainfo ran
+    assert result.imdb_id == "jav:SSIS-001"  # proves the new code-threading path
+
+
+def test_recognize_media_respects_providers_config():
+    """When ``_providers=['jav321']`` is set, ``recognize_media`` must fetch
+    the jav321 detail (not the top javbus result)."""
+    client = _StubClient(search_results=_CANNED_SEARCH, movie_detail=_CANNED_DETAIL)
+    plugin = _make_plugin(client=client)
+    plugin._providers = ["jav321"]
+
+    result = plugin.recognize_media(meta=_StubMeta(title="SSIS-001"))
+
+    assert result is not None
+    assert client.get_calls == [("jav321", "ssis-001-alt")]
