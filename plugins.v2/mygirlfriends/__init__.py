@@ -25,6 +25,66 @@ from app.utils.dom import DomUtils
 from .client import MetaTubeClient
 from .javcode import extract_jav_code
 
+# ---------------------------------------------------------------------------
+# Module-level regex constants for JAV filename suffix and part detection.
+# Place here (before the class) so pure helper functions below are importable
+# directly (``from mygirlfriends import _detect_jav_suffix``) without
+# instantiating the plugin class.
+# ---------------------------------------------------------------------------
+
+# Suffix whitelist: UC, CH, U, C — two-char alternatives MUST precede single-char
+# to avoid greedy match splitting "UC" into "U" + leftover "C".
+# Lookahead (?=[-_ \[]|$) deliberately excludes digits so that "C" before "D1"
+# in a "CD1" part token is NOT detected as a suffix (Assumption A2).
+_JAV_SUFFIX_WHITELIST = re.compile(
+    r"[-_ ]?(UC|CH|[UC])(?=[-_ .\[]|$)",
+    re.IGNORECASE,
+)
+
+# Part regex mirrors MetaVideo._part_re (app/core/meta/metavideo.py:32) exactly
+# so that our handler stays consistent with what MoviePilot itself recognises.
+_JAV_PART_RE = re.compile(
+    r"(?:[-_. ]|^)(PART[0-9ABI]{0,2}|CD[0-9]{0,2}|DVD[0-9]{0,2}|DISK[0-9]{0,2}|DISC[0-9]{0,2})(?=[-_. \[]|$)",
+    re.IGNORECASE,
+)
+
+
+def _detect_jav_suffix(code: str, stem: str) -> str:
+    """Return the first whitelisted suffix found after the code in stem.
+
+    Searches for *code* in *stem* (case-insensitive) then applies
+    ``_JAV_SUFFIX_WHITELIST`` to the remainder.  Returns the matched token
+    uppercased, or ``''`` if none found.
+
+    Examples::
+
+        _detect_jav_suffix('SSIS-001', '[FHD]SSIS-001UC[1080p]') -> 'UC'
+        _detect_jav_suffix('SSIS-001', 'SSIS-001-C.extra')       -> 'C'
+        _detect_jav_suffix('SSIS-001', 'SSIS-001-leak')          -> ''
+    """
+    pos = stem.upper().find(code.upper())
+    if pos < 0:
+        return ""
+    after = stem[pos + len(code):]
+    m = _JAV_SUFFIX_WHITELIST.match(after)
+    return m.group(0).strip("-_ ").upper() if m else ""
+
+
+def _detect_jav_part(stem: str) -> str:
+    """Return the part token from the source stem (uppercased), or empty string.
+
+    Mirrors MetaVideo._part_re (app/core/meta/metavideo.py:32) to stay
+    consistent with what MoviePilot itself would recognise.
+
+    Examples::
+
+        _detect_jav_part('SSIS-001-CD2')   -> 'CD2'
+        _detect_jav_part('SSIS-001-DISC1') -> 'DISC1'
+        _detect_jav_part('SSIS-001')       -> ''
+    """
+    m = _JAV_PART_RE.search(stem)
+    return m.group(1).upper() if m else ""
+
 
 class MyGirlfriends(_PluginBase):
     plugin_name = "我的女友们"
@@ -268,6 +328,55 @@ class MyGirlfriends(_PluginBase):
             f"我的女友们: MediaRecognizeConvert 收到番号 {code}，"
             "ID 转换不适用于 JAV 内容（无 TMDB/Douban ID）"
         )
+
+    @eventmanager.register(ChainEventType.TransferRename)
+    def on_transfer_rename(self, event: Event) -> None:
+        """Override library filename for JAV media.
+
+        Sets event_data.updated = True and event_data.updated_str to
+        '<CODE>/<CODE>[-SUFFIX][-PART]{fileExt}' for any file whose
+        rename_dict['imdbid'] starts with 'jav:'.  Non-JAV files are
+        left untouched (updated stays False).
+
+        Gate: only active when self._enabled and
+        self._recognition_mode == "hijacking" — mirrors the opt-in posture
+        of search_medias and async_recognize_media (D-06).
+        """
+        if not self._enabled or self._recognition_mode != "hijacking":
+            return
+        try:
+            event_data = event.event_data
+            if not event_data:
+                return
+            rename_dict = event_data.rename_dict or {}
+            imdbid = rename_dict.get("imdbid") or ""
+            if not imdbid.startswith("jav:"):
+                return  # non-JAV — leave updated=False, host uses default render_str
+
+            code = imdbid[4:]  # strip "jav:" prefix
+
+            source_path = event_data.source_path or ""
+            stem = Path(source_path).stem if source_path else ""
+            # Prefer rename_dict fileExt (host-provided) over path suffix (Pitfall 6)
+            file_ext = rename_dict.get("fileExt") or Path(source_path).suffix
+
+            suffix = _detect_jav_suffix(code, stem)
+            part = _detect_jav_part(stem)
+
+            filename = code
+            if suffix:
+                filename += f"-{suffix}"
+            if part:
+                filename += f"-{part}"
+            filename += file_ext
+
+            new_str = f"{code}/{filename}"
+            event_data.updated = True
+            event_data.updated_str = new_str
+            event_data.source = self.__class__.__name__
+        except Exception as exc:
+            logger.error(f"我的女友们: TransferRename 处理异常 - {exc}")
+            # leave updated=False so host falls back to default render_str
 
     def search_medias(self, meta: MetaBase = None, **kwargs) -> Optional[List[MediaInfo]]:
         """在 MoviePilot 搜索栏命中番号时返回 MetaTube 搜索结果列表。"""
