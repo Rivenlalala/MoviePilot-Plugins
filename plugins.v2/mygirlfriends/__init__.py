@@ -86,6 +86,23 @@ def _detect_jav_part(stem: str) -> str:
     return m.group(1).upper() if m else ""
 
 
+def _dump_meta(meta: "MetaBase | None") -> str:
+    """Compact one-line dump of MetaBase fields the plugin reads.
+
+    Used by debug logs across recognize / search paths so operators can grep
+    `[mygirlfriends/...]` and see exactly what the host handed us.
+    """
+    if meta is None:
+        return "meta=None"
+    return (
+        f"meta(type={getattr(meta, 'type', None)!r}, "
+        f"title={getattr(meta, 'title', None)!r}, "
+        f"name={getattr(meta, 'name', None)!r}, "
+        f"org_string={getattr(meta, 'org_string', None)!r}, "
+        f"year={getattr(meta, 'year', None)!r})"
+    )
+
+
 class MyGirlfriends(_PluginBase):
     plugin_name = "我的女友们"
     plugin_desc = "通过 MetaTube 服务器刮削 JAV 元数据，生成 NFO 文件和下载封面图片。"
@@ -224,11 +241,27 @@ class MyGirlfriends(_PluginBase):
         """
         code: Optional[str] = None
         try:
+            logger.debug(
+                f"[mygirlfriends/recognize_media] enter "
+                f"enabled={self._enabled} mode={self._recognition_mode!r} "
+                f"mtype={mtype!r} kwargs_keys={list(kwargs.keys())} "
+                f"tmdbid={kwargs.get('tmdbid')!r} doubanid={kwargs.get('doubanid')!r} "
+                f"bangumiid={kwargs.get('bangumiid')!r} {_dump_meta(meta)}"
+            )
             if not self._enabled or self._recognition_mode != "hijacking":
+                logger.debug(
+                    f"[mygirlfriends/recognize_media] skip: plugin disabled or mode!=hijacking "
+                    f"(enabled={self._enabled} mode={self._recognition_mode!r})"
+                )
                 return None
             if kwargs.get("tmdbid") or kwargs.get("doubanid") or kwargs.get("bangumiid"):
+                logger.debug(
+                    "[mygirlfriends/recognize_media] skip: explicit external ID set "
+                    "— passing through to TMDB/Douban/Bangumi chain"
+                )
                 return None
             if not meta:
+                logger.debug("[mygirlfriends/recognize_media] skip: meta is None")
                 return None
 
             title = getattr(meta, "title", None)
@@ -238,18 +271,38 @@ class MyGirlfriends(_PluginBase):
             # back to strict parser on org_string. Stays strict on both sides
             # to avoid mis-routing titles like "The Matrix 1999" to MetaTube.
             code = extract_jav_code(title) if title else None
+            parse_source = "title" if code else None
             if not code:
                 org_string = getattr(meta, "org_string", None)
                 if org_string and org_string != title:
                     code = extract_jav_code(org_string)
+                    if code:
+                        parse_source = "org_string"
+            logger.debug(
+                f"[mygirlfriends/recognize_media] parse result: code={code!r} "
+                f"source={parse_source!r}"
+            )
             if not code:
-                logger.debug(f"我的女友们: 标题未匹配番号，跳过 - {title!r}")
+                logger.debug(
+                    f"[mygirlfriends/recognize_media] no JAV code in title or org_string "
+                    f"— passing through to TMDB/Douban (title={title!r})"
+                )
                 return None
 
             logger.info(f"我的女友们: 识别命中番号 {code}，调用 MetaTube")
 
             infos = self._search_and_merge(code)
-            return infos[0] if infos else None
+            result = infos[0] if infos else None
+            logger.debug(
+                f"[mygirlfriends/recognize_media] return: code={code!r} "
+                f"found={result is not None} "
+                f"imdb_id={getattr(result, 'imdb_id', None)!r} "
+                f"mediaid_prefix={getattr(result, 'mediaid_prefix', None)!r} "
+                f"media_id={getattr(result, 'media_id', None)!r} "
+                f"category={getattr(result, 'category', None)!r} "
+                f"title={getattr(result, 'title', None)!r}"
+            )
+            return result
         except Exception as exc:  # noqa: BLE001 - chain must never raise
             logger.error(
                 f"我的女友们: 识别链异常 (番号 {code or '<unknown>'}) - {exc}"
@@ -265,23 +318,49 @@ class MyGirlfriends(_PluginBase):
         """真正的异步实现：parallel get_movie calls via asyncio.gather + to_thread."""
         import asyncio
 
+        logger.debug(
+            f"[mygirlfriends/async_recognize_media] enter "
+            f"enabled={self._enabled} mode={self._recognition_mode!r} "
+            f"mtype={mtype!r} kwargs_keys={list(kwargs.keys())} "
+            f"tmdbid={kwargs.get('tmdbid')!r} doubanid={kwargs.get('doubanid')!r} "
+            f"bangumiid={kwargs.get('bangumiid')!r} {_dump_meta(meta)}"
+        )
         if not self._enabled or self._recognition_mode != "hijacking":
+            logger.debug(
+                f"[mygirlfriends/async_recognize_media] skip: plugin disabled or mode!=hijacking "
+                f"(enabled={self._enabled} mode={self._recognition_mode!r})"
+            )
             return None
         if kwargs.get("tmdbid") or kwargs.get("doubanid") or kwargs.get("bangumiid"):
+            logger.debug(
+                "[mygirlfriends/async_recognize_media] skip: explicit external ID set "
+                "— passing through to TMDB/Douban/Bangumi chain"
+            )
             return None
         if not meta:
+            logger.debug("[mygirlfriends/async_recognize_media] skip: meta is None")
             return None
         title = getattr(meta, "title", None)
         # Same org_string fallback as recognize_media — MetaInfo normalises
         # the title but keeps the raw input on meta.org_string. Strict on both
         # sides so non-JAV titles never reach MetaTube.
         code = extract_jav_code(title) if title else None
+        parse_source = "title" if code else None
         if not code:
             org_string = getattr(meta, "org_string", None)
             if org_string and org_string != title:
                 code = extract_jav_code(org_string)
+                if code:
+                    parse_source = "org_string"
+        logger.debug(
+            f"[mygirlfriends/async_recognize_media] parse result: code={code!r} "
+            f"source={parse_source!r}"
+        )
         if not code:
-            logger.debug(f"我的女友们: 标题未匹配番号，跳过 - {title!r}")
+            logger.debug(
+                f"[mygirlfriends/async_recognize_media] no JAV code in title or org_string "
+                f"— passing through to TMDB/Douban (title={title!r})"
+            )
             return None
         logger.info(f"我的女友们: 识别命中番号 {code}，调用 MetaTube (async)")
         client = self._client
@@ -290,6 +369,10 @@ class MyGirlfriends(_PluginBase):
             return None
         try:
             results = await asyncio.to_thread(client.search_movie, code)
+            logger.debug(
+                f"[mygirlfriends/async_recognize_media] MetaTube search returned "
+                f"{len(results) if results else 0} result(s) for code={code!r}"
+            )
             if not results:
                 logger.warning(f"我的女友们: 搜索番号 {code} 无结果")
                 return None
@@ -301,6 +384,10 @@ class MyGirlfriends(_PluginBase):
             )
             if not ordered:
                 ordered = results[:1]
+            logger.debug(
+                f"[mygirlfriends/async_recognize_media] provider ordering: "
+                f"want={want!r} chosen={[(r.get('provider'), r.get('id')) for r in ordered]}"
+            )
             coros = [
                 asyncio.to_thread(client.get_movie, r.get("provider"), r.get("id"))
                 for r in ordered
@@ -312,12 +399,25 @@ class MyGirlfriends(_PluginBase):
                 for i, d in enumerate(raw)
                 if not isinstance(d, Exception) and d
             ]
+            logger.debug(
+                f"[mygirlfriends/async_recognize_media] get_movie outcomes: "
+                f"{[(p, mid, type(r).__name__ if isinstance(r, Exception) else 'ok') for (p, mid), r in zip([(o.get('provider'), o.get('id')) for o in ordered], raw)]}"
+            )
             if not details:
                 logger.warning(f"我的女友们: 所有 provider 详情获取失败 (番号 {code})")
                 return None
             merged = self._merge_details([d for _, _, d in details])
             best_prov, best_mid, _ = details[0]
-            return self._build_mediainfo(merged, best_prov, best_mid, code=code)
+            result = self._build_mediainfo(merged, best_prov, best_mid, code=code)
+            logger.debug(
+                f"[mygirlfriends/async_recognize_media] return: code={code!r} "
+                f"imdb_id={getattr(result, 'imdb_id', None)!r} "
+                f"mediaid_prefix={getattr(result, 'mediaid_prefix', None)!r} "
+                f"media_id={getattr(result, 'media_id', None)!r} "
+                f"category={getattr(result, 'category', None)!r} "
+                f"title={getattr(result, 'title', None)!r}"
+            )
+            return result
         except Exception as exc:
             logger.error(f"我的女友们: 异步识别链异常 (番号 {code}) - {exc}")
             return None
@@ -337,21 +437,38 @@ class MyGirlfriends(_PluginBase):
         ends up back in our own ``async_recognize_media`` — that path returns
         the synthesized MetaTube MediaInfo directly.
         """
-        if not self._enabled:
-            return
         event_data = event.event_data
         mediaid = (event_data.mediaid or "") if event_data else ""
+        convert_type = getattr(event_data, "convert_type", None) if event_data else None
+        logger.debug(
+            f"[mygirlfriends/MediaRecognizeConvert] enter "
+            f"enabled={self._enabled} mediaid={mediaid!r} convert_type={convert_type!r}"
+        )
+        if not self._enabled:
+            logger.debug("[mygirlfriends/MediaRecognizeConvert] skip: plugin disabled")
+            return
         if mediaid.startswith("imdb:jav:"):
             code = mediaid[len("imdb:jav:"):]
+            prefix = "imdb:jav:"
         elif mediaid.startswith("jav:"):
             code = mediaid[len("jav:"):]
+            prefix = "jav:"
         else:
+            logger.debug(
+                f"[mygirlfriends/MediaRecognizeConvert] skip: mediaid {mediaid!r} "
+                "is not a JAV id (no jav: or imdb:jav: prefix)"
+            )
             return
         if not code:
+            logger.debug(
+                f"[mygirlfriends/MediaRecognizeConvert] skip: empty code after stripping "
+                f"prefix {prefix!r} from mediaid {mediaid!r}"
+            )
             return
         logger.debug(
-            f"我的女友们: MediaRecognizeConvert 收到番号 {code}，"
-            "ID 转换不适用于 JAV 内容（由 recognize_media 兜底返回 MediaInfo）"
+            f"[mygirlfriends/MediaRecognizeConvert] acknowledged code={code!r} "
+            f"prefix={prefix!r} — NOT setting media_dict so detail endpoint falls "
+            "through to its title-based recognition branch"
         )
 
     @eventmanager.register(ChainEventType.TransferRename)
@@ -367,20 +484,39 @@ class MyGirlfriends(_PluginBase):
         self._recognition_mode == "hijacking" — mirrors the opt-in posture
         of search_medias and async_recognize_media (D-06).
         """
+        logger.debug(
+            f"[mygirlfriends/on_transfer_rename] enter "
+            f"enabled={self._enabled} mode={self._recognition_mode!r}"
+        )
         if not self._enabled or self._recognition_mode != "hijacking":
+            logger.debug(
+                f"[mygirlfriends/on_transfer_rename] skip: plugin disabled or mode!=hijacking "
+                f"(enabled={self._enabled} mode={self._recognition_mode!r})"
+            )
             return
         try:
             event_data = event.event_data
             if not event_data:
+                logger.debug("[mygirlfriends/on_transfer_rename] skip: event_data is None")
                 return
             rename_dict = event_data.rename_dict or {}
             imdbid = rename_dict.get("imdbid") or ""
+            source_path = event_data.source_path or ""
+            logger.debug(
+                f"[mygirlfriends/on_transfer_rename] event "
+                f"imdbid={imdbid!r} source_path={source_path!r} "
+                f"rename_dict_keys={list(rename_dict.keys())} "
+                f"fileExt={rename_dict.get('fileExt')!r}"
+            )
             if not imdbid.startswith("jav:"):
+                logger.debug(
+                    f"[mygirlfriends/on_transfer_rename] skip: imdbid {imdbid!r} "
+                    "not jav: prefixed — non-JAV file, leaving updated=False"
+                )
                 return  # non-JAV — leave updated=False, host uses default render_str
 
             code = imdbid[4:]  # strip "jav:" prefix
 
-            source_path = event_data.source_path or ""
             stem = Path(source_path).stem if source_path else ""
             # Prefer rename_dict fileExt (host-provided) over path suffix (Pitfall 6)
             file_ext = rename_dict.get("fileExt") or Path(source_path).suffix
@@ -399,31 +535,60 @@ class MyGirlfriends(_PluginBase):
             event_data.updated = True
             event_data.updated_str = new_str
             event_data.source = self.__class__.__name__
+            logger.debug(
+                f"[mygirlfriends/on_transfer_rename] rewrote: code={code!r} "
+                f"stem={stem!r} suffix={suffix!r} part={part!r} "
+                f"file_ext={file_ext!r} updated_str={new_str!r}"
+            )
         except Exception as exc:
             logger.error(f"我的女友们: TransferRename 处理异常 - {exc}")
             # leave updated=False so host falls back to default render_str
 
     def search_medias(self, meta: MetaBase = None, **kwargs) -> Optional[List[MediaInfo]]:
         """在 MoviePilot 搜索栏命中番号时返回 MetaTube 搜索结果列表。"""
+        logger.debug(
+            f"[mygirlfriends/search_medias] enter "
+            f"enabled={self._enabled} mode={self._recognition_mode!r} "
+            f"kwargs_keys={list(kwargs.keys())} {_dump_meta(meta)}"
+        )
         if not self._enabled or self._recognition_mode != "hijacking":
+            logger.debug(
+                f"[mygirlfriends/search_medias] skip: plugin disabled or mode!=hijacking "
+                f"(enabled={self._enabled} mode={self._recognition_mode!r})"
+            )
             return None
         title = getattr(meta, "name", None) or getattr(meta, "title", None)
         # MoviePilot normalises hyphens to spaces and title-cases the prefix
         # before invoking the plugin (e.g. STARS-944 -> "Stars 944"), so the
         # search path uses the loose matcher. Filename callers stay strict.
         code = extract_jav_code_loose(title) if title else None
+        logger.debug(
+            f"[mygirlfriends/search_medias] loose parse: title={title!r} -> code={code!r}"
+        )
         if not code:
-            logger.debug(f"我的女友们: search_medias 标题未匹配番号，跳过 - {title!r}")
+            logger.debug(
+                f"[mygirlfriends/search_medias] no JAV code in title — "
+                f"returning None (title={title!r})"
+            )
             return None
         logger.info(f"我的女友们: search_medias 命中番号 {code}")
         try:
-            return self._search_and_merge(code)
+            result = self._search_and_merge(code)
+            logger.debug(
+                f"[mygirlfriends/search_medias] return: code={code!r} "
+                f"result_count={len(result) if result else 0}"
+            )
+            return result
         except Exception as exc:
             logger.error(f"我的女友们: search_medias 异常 (番号 {code}) - {exc}")
             return None
 
     async def async_search_medias(self, meta: MetaBase = None, **kwargs) -> Optional[List[MediaInfo]]:
         """异步入口，调用同步 search_medias。"""
+        logger.debug(
+            f"[mygirlfriends/async_search_medias] delegating to sync search_medias "
+            f"{_dump_meta(meta)}"
+        )
         return self.search_medias(meta=meta, **kwargs)
 
     def _check_category_yaml(self) -> None:
@@ -511,6 +676,18 @@ class MyGirlfriends(_PluginBase):
             media.category = "JAV"
             media.title = code
 
+        logger.debug(
+            f"[mygirlfriends/_build_mediainfo] built MediaInfo "
+            f"provider={provider!r} movie_id={movie_id!r} code={code!r} "
+            f"imdb_id={getattr(media, 'imdb_id', None)!r} "
+            f"mediaid_prefix={getattr(media, 'mediaid_prefix', None)!r} "
+            f"media_id={getattr(media, 'media_id', None)!r} "
+            f"category={getattr(media, 'category', None)!r} "
+            f"title={getattr(media, 'title', None)!r} "
+            f"original_title={getattr(media, 'original_title', None)!r} "
+            f"year={getattr(media, 'year', None)!r} "
+            f"poster_path_set={bool(getattr(media, 'poster_path', None))}"
+        )
         return media
 
     def _merge_details(self, details: List[dict]) -> dict:
@@ -531,12 +708,21 @@ class MyGirlfriends(_PluginBase):
 
     def _search_and_merge(self, code: str) -> Optional[List[MediaInfo]]:
         """搜索番号并合并多 provider 详情，返回 MediaInfo 列表。"""
+        logger.debug(
+            f"[mygirlfriends/_search_and_merge] enter code={code!r} "
+            f"providers={self._providers!r} client_initialized={self._client is not None}"
+        )
         client = self._client
         if client is None:
             logger.warning(f"我的女友们: 客户端未初始化，跳过番号 {code}")
             return None
 
         results = client.search_movie(code)
+        logger.debug(
+            f"[mygirlfriends/_search_and_merge] MetaTube search_movie({code!r}) "
+            f"returned {len(results) if results else 0} hit(s): "
+            f"{[(r.get('provider'), r.get('id')) for r in (results or [])]}"
+        )
         if not results:
             logger.warning(f"我的女友们: 搜索番号 {code} 无结果")
             return None
@@ -550,6 +736,11 @@ class MyGirlfriends(_PluginBase):
 
         if not ordered:
             ordered = results[:1]
+        logger.debug(
+            f"[mygirlfriends/_search_and_merge] provider ordering: "
+            f"want={self._providers!r} -> chosen "
+            f"{[(r.get('provider'), r.get('id')) for r in ordered]}"
+        )
 
         details = []
         for r in ordered:
@@ -559,16 +750,29 @@ class MyGirlfriends(_PluginBase):
                 logger.warning(f"我的女友们: 搜索结果缺少 provider/id (番号 {code}): {r!r}")
                 continue
             detail = client.get_movie(prov, mid)
+            logger.debug(
+                f"[mygirlfriends/_search_and_merge] get_movie({prov!r}, {mid!r}) "
+                f"-> {'ok' if detail is not None else 'None'} "
+                f"keys={list(detail.keys()) if isinstance(detail, dict) else None}"
+            )
             if detail is None:
                 logger.warning(f"我的女友们: 获取 {prov}/{mid} 详情失败 (番号 {code})")
                 continue
             details.append((prov, mid, detail))
 
         if not details:
+            logger.debug(
+                f"[mygirlfriends/_search_and_merge] no usable details for code={code!r} "
+                "— returning None"
+            )
             return None
 
         merged = self._merge_details([d for _, _, d in details])
         best_prov, best_mid, _ = details[0]
+        logger.debug(
+            f"[mygirlfriends/_search_and_merge] merged details: "
+            f"best=({best_prov!r}, {best_mid!r}) merged_keys={list(merged.keys())}"
+        )
         return [self._build_mediainfo(merged, best_prov, best_mid, code=code)]
 
     @staticmethod
