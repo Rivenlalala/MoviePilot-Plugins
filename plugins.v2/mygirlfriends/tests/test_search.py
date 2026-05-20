@@ -546,3 +546,51 @@ def test_async_recognize_media_sets_imdb_id_jav_prefix():
 
     assert result is not None
     assert result.imdb_id == "jav:SSIS-001"
+
+
+# === _build_mediainfo category + title overrides (D-01, D-04) ===========
+
+
+def test_build_mediainfo_sets_category_jav():
+    """D-01: category must be 'JAV' when a canonical code is provided."""
+    plugin = _make_plugin(client=_StubClient())
+
+    media = plugin._build_mediainfo(
+        {"title": "Japanese Title"}, "javbus", "ssis-001", code="SSIS-001"
+    )
+
+    assert media.category == "JAV"
+
+
+def test_build_mediainfo_sets_title_to_code():
+    """D-04: title must equal the canonical code (overrides translation)."""
+    plugin = _make_plugin(client=_StubClient())
+
+    media = plugin._build_mediainfo(
+        {"title": "Japanese Title"}, "javbus", "ssis-001", code="SSIS-001"
+    )
+
+    assert media.title == "SSIS-001"
+
+
+def test_build_mediainfo_preserves_original_title():
+    """original_title must remain the MetaTube detail title (not overwritten)."""
+    plugin = _make_plugin(client=_StubClient())
+
+    media = plugin._build_mediainfo(
+        {"title": "Japanese Title"}, "javbus", "ssis-001", code="SSIS-001"
+    )
+
+    assert media.original_title == "Japanese Title"
+
+
+def test_build_mediainfo_no_code_skips_category_and_title_override():
+    """When code is None, new overrides must NOT fire (non-JAV path unchanged)."""
+    plugin = _make_plugin(client=_StubClient())
+
+    media = plugin._build_mediainfo(
+        {"title": "Some Movie"}, "javbus", "abc", code=None
+    )
+
+    assert getattr(media, "category", None) != "JAV"
+    assert getattr(media, "title", None) != "SSIS-001"
