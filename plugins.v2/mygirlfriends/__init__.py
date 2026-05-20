@@ -232,7 +232,16 @@ class MyGirlfriends(_PluginBase):
                 return None
 
             title = getattr(meta, "title", None)
+            # MoviePilot's MetaInfo normalises hyphens to spaces and title-cases
+            # the prefix (STARS-944 -> "Stars 944"), but preserves the raw input
+            # on meta.org_string. Try strict parser on title first, then fall
+            # back to strict parser on org_string. Stays strict on both sides
+            # to avoid mis-routing titles like "The Matrix 1999" to MetaTube.
             code = extract_jav_code(title) if title else None
+            if not code:
+                org_string = getattr(meta, "org_string", None)
+                if org_string and org_string != title:
+                    code = extract_jav_code(org_string)
             if not code:
                 logger.debug(f"我的女友们: 标题未匹配番号，跳过 - {title!r}")
                 return None
@@ -263,7 +272,14 @@ class MyGirlfriends(_PluginBase):
         if not meta:
             return None
         title = getattr(meta, "title", None)
+        # Same org_string fallback as recognize_media — MetaInfo normalises
+        # the title but keeps the raw input on meta.org_string. Strict on both
+        # sides so non-JAV titles never reach MetaTube.
         code = extract_jav_code(title) if title else None
+        if not code:
+            org_string = getattr(meta, "org_string", None)
+            if org_string and org_string != title:
+                code = extract_jav_code(org_string)
         if not code:
             logger.debug(f"我的女友们: 标题未匹配番号，跳过 - {title!r}")
             return None
@@ -308,25 +324,34 @@ class MyGirlfriends(_PluginBase):
 
     @eventmanager.register(ChainEventType.MediaRecognizeConvert)
     async def async_media_recognize_convert(self, event: Event) -> None:
-        """Handle jav: prefix media IDs fired after search_medias sets imdb_id='jav:CODE'.
+        """Acknowledge JAV mediaids fired by the detail endpoint.
 
-        JAV content has no TMDB/Douban ID, so the ID-based torrent search path
-        (search_by_id_stream) cannot be populated here. Title-based search
-        (search_by_title_stream with the JAV code) is the correct path — S03/S04 scope.
+        Two prefix variants reach us:
+          * ``jav:CODE`` — from MediaCard click-through (mediaid_prefix=jav)
+          * ``imdb:jav:CODE`` — legacy, from older imdb_id wiring
+
+        JAV content has no TMDB/Douban ID, so we never set
+        ``event_data.media_dict`` (which would route through a TMDB/Douban
+        round-trip). Instead we let the detail endpoint fall through to its
+        ``elif title:`` branch, which calls ``async_recognize_by_meta`` and
+        ends up back in our own ``async_recognize_media`` — that path returns
+        the synthesized MetaTube MediaInfo directly.
         """
         if not self._enabled:
             return
         event_data = event.event_data
         mediaid = (event_data.mediaid or "") if event_data else ""
-        # search endpoint fires mediaid as 'imdb:jav:CODE'
-        if not mediaid.startswith("imdb:jav:"):
+        if mediaid.startswith("imdb:jav:"):
+            code = mediaid[len("imdb:jav:"):]
+        elif mediaid.startswith("jav:"):
+            code = mediaid[len("jav:"):]
+        else:
             return
-        code = mediaid[len("imdb:jav:"):]
         if not code:
             return
         logger.debug(
             f"我的女友们: MediaRecognizeConvert 收到番号 {code}，"
-            "ID 转换不适用于 JAV 内容（无 TMDB/Douban ID）"
+            "ID 转换不适用于 JAV 内容（由 recognize_media 兜底返回 MediaInfo）"
         )
 
     @eventmanager.register(ChainEventType.TransferRename)
@@ -477,6 +502,12 @@ class MyGirlfriends(_PluginBase):
 
         if code:
             media.imdb_id = f"jav:{code}"
+            # mediaid_prefix + media_id drive MediaCard's click-through URL when
+            # tmdb_id / douban_id / bangumi_id are all None. Without these the
+            # frontend builds /api/v1/media/undefined:undefined and the detail
+            # page 404s instead of falling through to recognize_media.
+            media.mediaid_prefix = "jav"
+            media.media_id = code
             media.category = "JAV"
             media.title = code
 
