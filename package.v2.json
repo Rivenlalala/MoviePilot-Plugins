@@ -1036,11 +1036,12 @@
     "name": "我的女友们",
     "description": "通过 MetaTube 服务器刮削 JAV 元数据，生成 NFO 文件和下载封面图片。",
     "labels": "刮削,元数据,JAV",
-    "version": "1.2",
+    "version": "1.3",
     "icon": "metatube.png",
     "author": "ruiwen",
     "level": 2,
     "history": {
+      "v1.3": "搜索路径采用宽松番号解析：兼容 MoviePilot 主程序对搜索输入的去连字符和首字母大写规则（如 STARS-944 被传入为 \"Stars 944\"），同时支持无分隔形式（如 stars944、STARS944）。文件名识别仍走严格解析以避免与 H264/X265 等发布标签冲突。",
       "v1.2": "Phase 4 transfer 集成：_build_mediainfo 设置 media.category=\"JAV\" 与 media.title=<code>；新增 ChainEventType.TransferRename 处理器，按 <CODE>/<CODE>[-后缀][-分段]{扩展名} 改写库内文件名（保留 U/C/UC/CH 后缀白名单与 CD/DVD/DISK/DISC/PART 分段）；init_plugin 启动时检查 category.yaml 是否包含 JAV 桶；表单新增 JAV 目录配置指引 VAlert；插件仍然 transfer_type 中立，由用户在 TransferDirectoryConf 自行配置。",
       "v1.1": "接入 search_medias 识别链；新增多 provider 配置与字段合并；async_recognize_media 改为真正并行 (asyncio.gather)；JAV 番号写入 imdb_id=jav:<CODE> 并注册 MediaRecognizeConvert 处理。",
       "v1.0": "初始版本：支持自动/手动刮削、NFO 生成、封面下载、翻译、定时扫描；可选启用 MetaTube 识别链劫持。"
