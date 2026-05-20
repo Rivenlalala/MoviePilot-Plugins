@@ -19,7 +19,7 @@ from app.core.meta import MetaBase
 from app.log import logger
 from app.plugins import _PluginBase
 from app.schemas import NotificationType
-from app.schemas.types import EventType, MediaType
+from app.schemas.types import ChainEventType, EventType, MediaType
 from app.utils.dom import DomUtils
 
 from .client import MetaTubeClient
@@ -30,7 +30,7 @@ class MyGirlfriends(_PluginBase):
     plugin_name = "我的女友们"
     plugin_desc = "通过 MetaTube 服务器刮削 JAV 元数据，生成 NFO 文件和下载封面图片。"
     plugin_icon = "metatube.png"
-    plugin_version = "1.0"
+    plugin_version = "1.1"
     plugin_author = "ruiwen"
     author_url = "https://github.com/Rivenlalala"
     plugin_config_prefix = "mygirlfriends_"
@@ -52,6 +52,7 @@ class MyGirlfriends(_PluginBase):
     _notify = False
     _scan_paths = ""
     _exclude_paths = ""
+    _providers: List[str] = []
 
     _scheduler: Optional[BackgroundScheduler] = None
     _event = threading.Event()
@@ -76,6 +77,8 @@ class MyGirlfriends(_PluginBase):
             self._notify = config.get("notify", False)
             self._scan_paths = config.get("scan_paths", "")
             self._exclude_paths = config.get("exclude_paths", "")
+            raw_providers = config.get("providers", "")
+            self._providers = [p.strip() for p in raw_providers.splitlines() if p.strip()]
 
         self._client = MetaTubeClient(self._server_url, self._token) if self._server_url else None
 
@@ -117,6 +120,7 @@ class MyGirlfriends(_PluginBase):
                 "notify": self._notify,
                 "scan_paths": self._scan_paths,
                 "exclude_paths": self._exclude_paths,
+                "providers": "\n".join(self._providers),
             })
             if self._scheduler.get_jobs():
                 self._scheduler.print_jobs()
@@ -138,6 +142,8 @@ class MyGirlfriends(_PluginBase):
         if self._enabled and self._recognition_mode == "hijacking":
             modules["recognize_media"] = self.recognize_media
             modules["async_recognize_media"] = self.async_recognize_media
+            modules["search_medias"] = self.search_medias
+            modules["async_search_medias"] = self.async_search_medias
         return modules
 
     def recognize_media(
@@ -170,33 +176,8 @@ class MyGirlfriends(_PluginBase):
 
             logger.info(f"我的女友们: 识别命中番号 {code}，调用 MetaTube")
 
-            client = self._client
-            if client is None:
-                logger.warning(f"我的女友们: 客户端未初始化，跳过番号 {code}")
-                return None
-
-            results = client.search_movie(code)
-            if not results:
-                logger.warning(f"我的女友们: 搜索番号 {code} 无结果")
-                return None
-
-            best = results[0]
-            provider = best.get("provider") or ""
-            movie_id = best.get("id") or ""
-            if not provider or not movie_id:
-                logger.warning(
-                    f"我的女友们: 搜索结果缺少 provider/id (番号 {code}): {best!r}"
-                )
-                return None
-
-            detail = client.get_movie(provider, movie_id)
-            if not detail:
-                logger.warning(
-                    f"我的女友们: 获取 {provider}/{movie_id} 详情失败 (番号 {code})"
-                )
-                return None
-
-            return self._build_mediainfo(detail, provider, movie_id)
+            infos = self._search_and_merge(code)
+            return infos[0] if infos else None
         except Exception as exc:  # noqa: BLE001 - chain must never raise
             logger.error(
                 f"我的女友们: 识别链异常 (番号 {code or '<unknown>'}) - {exc}"
@@ -209,13 +190,104 @@ class MyGirlfriends(_PluginBase):
         mtype: MediaType = None,
         **kwargs,
     ) -> Optional[MediaInfo]:
-        """异步入口。S01 仍走同步实现 —— 内部依赖的 ``requests`` 是同步的，
-        多 provider 并行属于 S02 范围。
+        """真正的异步实现：parallel get_movie calls via asyncio.gather + to_thread."""
+        import asyncio
+
+        if not self._enabled or self._recognition_mode != "hijacking":
+            return None
+        if kwargs.get("tmdbid") or kwargs.get("doubanid") or kwargs.get("bangumiid"):
+            return None
+        if not meta:
+            return None
+        title = getattr(meta, "title", None)
+        code = extract_jav_code(title) if title else None
+        if not code:
+            logger.debug(f"我的女友们: 标题未匹配番号，跳过 - {title!r}")
+            return None
+        logger.info(f"我的女友们: 识别命中番号 {code}，调用 MetaTube (async)")
+        client = self._client
+        if client is None:
+            logger.warning(f"我的女友们: 客户端未初始化，跳过番号 {code}")
+            return None
+        try:
+            results = await asyncio.to_thread(client.search_movie, code)
+            if not results:
+                logger.warning(f"我的女友们: 搜索番号 {code} 无结果")
+                return None
+            want = self._providers
+            ordered = (
+                [r for p in want for r in results if r.get("provider") == p]
+                if want
+                else results[:1]
+            )
+            if not ordered:
+                ordered = results[:1]
+            coros = [
+                asyncio.to_thread(client.get_movie, r.get("provider"), r.get("id"))
+                for r in ordered
+                if r.get("provider") and r.get("id")
+            ]
+            raw = await asyncio.gather(*coros, return_exceptions=True)
+            details = [
+                (ordered[i].get("provider"), ordered[i].get("id"), d)
+                for i, d in enumerate(raw)
+                if not isinstance(d, Exception) and d
+            ]
+            if not details:
+                logger.warning(f"我的女友们: 所有 provider 详情获取失败 (番号 {code})")
+                return None
+            merged = self._merge_details([d for _, _, d in details])
+            best_prov, best_mid, _ = details[0]
+            return self._build_mediainfo(merged, best_prov, best_mid, code=code)
+        except Exception as exc:
+            logger.error(f"我的女友们: 异步识别链异常 (番号 {code}) - {exc}")
+            return None
+
+    @eventmanager.register(ChainEventType.MediaRecognizeConvert)
+    async def async_media_recognize_convert(self, event: Event) -> None:
+        """Handle jav: prefix media IDs fired after search_medias sets imdb_id='jav:CODE'.
+
+        JAV content has no TMDB/Douban ID, so the ID-based torrent search path
+        (search_by_id_stream) cannot be populated here. Title-based search
+        (search_by_title_stream with the JAV code) is the correct path — S03/S04 scope.
         """
-        return self.recognize_media(meta=meta, mtype=mtype, **kwargs)
+        if not self._enabled:
+            return
+        event_data = event.event_data
+        mediaid = (event_data.mediaid or "") if event_data else ""
+        # search endpoint fires mediaid as 'imdb:jav:CODE'
+        if not mediaid.startswith("imdb:jav:"):
+            return
+        code = mediaid[len("imdb:jav:"):]
+        if not code:
+            return
+        logger.debug(
+            f"我的女友们: MediaRecognizeConvert 收到番号 {code}，"
+            "ID 转换不适用于 JAV 内容（无 TMDB/Douban ID）"
+        )
+
+    def search_medias(self, meta: MetaBase = None, **kwargs) -> Optional[List[MediaInfo]]:
+        """在 MoviePilot 搜索栏命中番号时返回 MetaTube 搜索结果列表。"""
+        if not self._enabled or self._recognition_mode != "hijacking":
+            return None
+        title = getattr(meta, "name", None) or getattr(meta, "title", None)
+        code = extract_jav_code(title) if title else None
+        if not code:
+            logger.debug(f"我的女友们: search_medias 标题未匹配番号，跳过 - {title!r}")
+            return None
+        logger.info(f"我的女友们: search_medias 命中番号 {code}")
+        try:
+            return self._search_and_merge(code)
+        except Exception as exc:
+            logger.error(f"我的女友们: search_medias 异常 (番号 {code}) - {exc}")
+            return None
+
+    async def async_search_medias(self, meta: MetaBase = None, **kwargs) -> Optional[List[MediaInfo]]:
+        """异步入口，调用同步 search_medias。"""
+        return self.search_medias(meta=meta, **kwargs)
 
     def _build_mediainfo(
-        self, detail: dict, provider: str, movie_id: str
+        self, detail: dict, provider: str, movie_id: str, code: str = None
     ) -> MediaInfo:
         """将 MetaTube 详情字典映射成 MoviePilot ``MediaInfo``。
 
@@ -271,7 +343,68 @@ class MyGirlfriends(_PluginBase):
         maker = detail.get("maker")
         media.production_companies = [{"name": maker}] if maker else []
 
+        if code:
+            media.imdb_id = f"jav:{code}"
+
         return media
+
+    def _merge_details(self, details: List[dict]) -> dict:
+        """合并多个 provider 的详情，每个字段取第一个非空值。"""
+        merged: dict = {}
+        fields = (
+            "title", "summary", "release_date", "score", "runtime",
+            "genres", "actors", "director", "maker", "series", "label",
+        )
+        for field in fields:
+            for detail in details:
+                val = detail.get(field)
+                if val is None or val == "" or val == [] or val == 0:
+                    continue
+                merged[field] = val
+                break
+        return merged
+
+    def _search_and_merge(self, code: str) -> Optional[List[MediaInfo]]:
+        """搜索番号并合并多 provider 详情，返回 MediaInfo 列表。"""
+        client = self._client
+        if client is None:
+            logger.warning(f"我的女友们: 客户端未初始化，跳过番号 {code}")
+            return None
+
+        results = client.search_movie(code)
+        if not results:
+            logger.warning(f"我的女友们: 搜索番号 {code} 无结果")
+            return None
+
+        if self._providers:
+            ordered = [
+                r for p in self._providers for r in results if r.get("provider") == p
+            ]
+        else:
+            ordered = results[:1]
+
+        if not ordered:
+            ordered = results[:1]
+
+        details = []
+        for r in ordered:
+            prov = r.get("provider") or ""
+            mid = r.get("id") or ""
+            if not prov or not mid:
+                logger.warning(f"我的女友们: 搜索结果缺少 provider/id (番号 {code}): {r!r}")
+                continue
+            detail = client.get_movie(prov, mid)
+            if detail is None:
+                logger.warning(f"我的女友们: 获取 {prov}/{mid} 详情失败 (番号 {code})")
+                continue
+            details.append((prov, mid, detail))
+
+        if not details:
+            return None
+
+        merged = self._merge_details([d for _, _, d in details])
+        best_prov, best_mid, _ = details[0]
+        return [self._build_mediainfo(merged, best_prov, best_mid, code=code)]
 
     @staticmethod
     def get_command() -> List[Dict[str, Any]]:
@@ -519,6 +652,26 @@ class MyGirlfriends(_PluginBase):
                         "content": [
                             {
                                 "component": "VCol",
+                                "props": {"cols": 12},
+                                "content": [
+                                    {
+                                        "component": "VTextarea",
+                                        "props": {
+                                            "model": "providers",
+                                            "label": "识别优先提供商（每行一个）",
+                                            "placeholder": "javbus\njav321",
+                                            "rows": 3,
+                                        },
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                    {
+                        "component": "VRow",
+                        "content": [
+                            {
+                                "component": "VCol",
                                 "props": {"cols": 12, "md": 4},
                                 "content": [
                                     {
@@ -612,6 +765,7 @@ class MyGirlfriends(_PluginBase):
             "notify": False,
             "scan_paths": "",
             "exclude_paths": "",
+            "providers": "",
         }
 
     def get_page(self) -> List[dict]:

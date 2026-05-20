@@ -1036,11 +1036,12 @@
     "name": "我的女友们",
     "description": "通过 MetaTube 服务器刮削 JAV 元数据，生成 NFO 文件和下载封面图片。",
     "labels": "刮削,元数据,JAV",
-    "version": "1.0",
+    "version": "1.1",
     "icon": "metatube.png",
     "author": "ruiwen",
     "level": 2,
     "history": {
+      "v1.1": "接入 search_medias 识别链；新增多 provider 配置与字段合并；async_recognize_media 改为真正并行 (asyncio.gather)；JAV 番号写入 imdb_id=jav:<CODE> 并注册 MediaRecognizeConvert 处理。",
       "v1.0": "初始版本：支持自动/手动刮削、NFO 生成、封面下载、翻译、定时扫描；可选启用 MetaTube 识别链劫持。"
     }
   }

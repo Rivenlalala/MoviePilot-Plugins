@@ -312,9 +312,14 @@ def test_get_module_exposes_methods_when_hijacking():
 
     modules = plugin.get_module()
 
-    assert set(modules.keys()) == {"recognize_media", "async_recognize_media"}
+    assert set(modules.keys()) == {
+        "recognize_media", "async_recognize_media",
+        "search_medias", "async_search_medias",
+    }
     assert modules["recognize_media"] == plugin.recognize_media
     assert modules["async_recognize_media"] == plugin.async_recognize_media
+    assert modules["search_medias"] == plugin.search_medias
+    assert modules["async_search_medias"] == plugin.async_search_medias
 
 
 # --- init_plugin: SECURITY_IMAGE_DOMAINS registration --------------------
