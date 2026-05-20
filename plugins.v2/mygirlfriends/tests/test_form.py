@@ -82,3 +82,55 @@ def test_recognition_mode_has_hijacking_option():
     values = [item["value"] for item in items]
     assert "hijacking" in values, f"recognition_mode items missing 'hijacking': {values}"
     assert "disabled" in values, f"recognition_mode items missing 'disabled': {values}"
+
+
+def test_form_contains_jav_setup_valert():
+    """Test A: form contains a warning VAlert titled 'JAV 整理配置（必需）'."""
+    form, _ = MyGirlfriends().get_form()
+    all_nodes = _walk_form(form)
+    matches = [
+        n for n in all_nodes
+        if n.get("component") == "VAlert"
+        and (n.get("props") or {}).get("title") == "JAV 整理配置（必需）"
+    ]
+    assert len(matches) == 1, (
+        f"Expected exactly 1 VAlert with title='JAV 整理配置（必需）', found {len(matches)}"
+    )
+    valert = matches[0]
+    assert (valert.get("props") or {}).get("type") == "warning", (
+        f"Expected props.type=='warning', got {(valert.get('props') or {}).get('type')!r}"
+    )
+    assert (valert.get("props") or {}).get("variant") == "tonal", (
+        f"Expected props.variant=='tonal', got {(valert.get('props') or {}).get('variant')!r}"
+    )
+
+
+def test_jav_setup_valert_has_four_step_spans():
+    """Test B: the JAV setup VAlert has four span children with the required key substrings."""
+    form, _ = MyGirlfriends().get_form()
+    all_nodes = _walk_form(form)
+    matches = [
+        n for n in all_nodes
+        if n.get("component") == "VAlert"
+        and (n.get("props") or {}).get("title") == "JAV 整理配置（必需）"
+    ]
+    assert len(matches) == 1
+    valert = matches[0]
+    content = valert.get("content") or []
+    assert len(content) == 4, f"Expected 4 span children, got {len(content)}"
+    for i, child in enumerate(content):
+        assert child.get("component") == "span", (
+            f"child {i}: expected component=='span', got {child.get('component')!r}"
+        )
+        assert isinstance(child.get("text"), str) and len(child["text"]) > 0, (
+            f"child {i}: expected non-empty text string"
+        )
+    s = "\n".join(c["text"] for c in content)
+    required_substrings = [
+        "category.yaml", "movie:", "电影", "JAV媒体库", "刮削=关闭",
+        "劫持", "hijacking", "Jellyfin", "MetaTube", "<CODE>",
+    ]
+    for sub in required_substrings:
+        assert sub in s, f"Concatenated span text missing required substring: {sub!r}"
+    assert "transfer_type=link" not in s, "Span text must not prescribe transfer_type=link (D-11)"
+    assert "transfer_type=hardlink" not in s, "Span text must not prescribe transfer_type=hardlink (D-11)"
