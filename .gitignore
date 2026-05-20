@@ -161,3 +161,8 @@ cython_debug/
 
 .idea/
 .vscode/
+
+# Local GSD planning workspace — not for upstream
+.planning/
+.claude/
+CLAUDE.md

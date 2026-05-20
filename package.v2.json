@@ -1031,5 +1031,17 @@
       "v1.3": "修复观众做种数据异常问题",
       "v1.2": "修复契约检查无数据返回的问题"
     }
+  },
+  "MyGirlfriends": {
+    "name": "我的女友们",
+    "description": "通过 MetaTube 服务器刮削 JAV 元数据，生成 NFO 文件和下载封面图片。",
+    "labels": "刮削,元数据,JAV",
+    "version": "1.0",
+    "icon": "metatube.png",
+    "author": "ruiwen",
+    "level": 2,
+    "history": {
+      "v1.0": "初始版本：支持自动/手动刮削、NFO 生成、封面下载、翻译、定时扫描；可选启用 MetaTube 识别链劫持。"
+    }
   }
 }
