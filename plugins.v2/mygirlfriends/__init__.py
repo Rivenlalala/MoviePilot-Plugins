@@ -90,7 +90,7 @@ class MyGirlfriends(_PluginBase):
     plugin_name = "我的女友们"
     plugin_desc = "通过 MetaTube 服务器刮削 JAV 元数据，生成 NFO 文件和下载封面图片。"
     plugin_icon = "metatube.png"
-    plugin_version = "1.3"
+    plugin_version = "1.4"
     plugin_author = "ruiwen"
     author_url = "https://github.com/Rivenlalala"
     plugin_config_prefix = "mygirlfriends_"

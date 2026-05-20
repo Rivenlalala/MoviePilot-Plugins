@@ -1036,11 +1036,12 @@
     "name": "我的女友们",
     "description": "通过 MetaTube 服务器刮削 JAV 元数据，生成 NFO 文件和下载封面图片。",
     "labels": "刮削,元数据,JAV",
-    "version": "1.3",
+    "version": "1.4",
     "icon": "metatube.png",
     "author": "ruiwen",
     "level": 2,
     "history": {
+      "v1.4": "修复点击搜索结果卡片后详情页 404 的问题：recognize_media / async_recognize_media 增加 meta.org_string 兜底（兼容 MoviePilot 把 STARS-944 解析为 \"Stars 944\" 后仍能识别），并在 MediaInfo 上写入 mediaid_prefix=jav 与 media_id=<CODE> 让前端 MediaCard 生成正确的 /api/v1/media/jav:<CODE> 路由。识别路径仍走严格解析，不会把 \"The Matrix 1999\" 之类带年份的普通电影误送至 MetaTube。MediaRecognizeConvert 同时接受 jav: 与 imdb:jav: 两种前缀。",
       "v1.3": "搜索路径采用宽松番号解析：兼容 MoviePilot 主程序对搜索输入的去连字符和首字母大写规则（如 STARS-944 被传入为 \"Stars 944\"），同时支持无分隔形式（如 stars944、STARS944）。文件名识别仍走严格解析以避免与 H264/X265 等发布标签冲突。",
       "v1.2": "Phase 4 transfer 集成：_build_mediainfo 设置 media.category=\"JAV\" 与 media.title=<code>；新增 ChainEventType.TransferRename 处理器，按 <CODE>/<CODE>[-后缀][-分段]{扩展名} 改写库内文件名（保留 U/C/UC/CH 后缀白名单与 CD/DVD/DISK/DISC/PART 分段）；init_plugin 启动时检查 category.yaml 是否包含 JAV 桶；表单新增 JAV 目录配置指引 VAlert；插件仍然 transfer_type 中立，由用户在 TransferDirectoryConf 自行配置。",
       "v1.1": "接入 search_medias 识别链；新增多 provider 配置与字段合并；async_recognize_media 改为真正并行 (asyncio.gather)；JAV 番号写入 imdb_id=jav:<CODE> 并注册 MediaRecognizeConvert 处理。",
